@@ -200,6 +200,7 @@ const ModelDashboard: React.FC<ModelDashboardProps> = ({
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const dropdownRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<TableInstance<any>>(null);
+  const hasInitializedMetrics = useRef(false);
 
   // Pagination state
   const [pagination, setPagination] = useState<PaginationState>({
@@ -390,6 +391,10 @@ const ModelDashboard: React.FC<ModelDashboardProps> = ({
   };
 
   useEffect(() => {
+    if (!hasInitializedMetrics.current) {
+      hasInitializedMetrics.current = true;
+      return;
+    }
     updateModelMetrics(selectedModelGroup, dateValue.from, dateValue.to);
   }, [selectedAPIKey, selectedCustomer, selectedTeam]);
 
@@ -457,10 +462,162 @@ const ModelDashboard: React.FC<ModelDashboardProps> = ({
     },
   };
 
+  const fetchDashboardData = async () => {
+    if (!accessToken || !token || !userRole || !userID) {
+      return;
+    }
+    try {
+      const modelDataResponse = await modelInfoCall(accessToken, userID, userRole);
+      console.log("Model data response:", modelDataResponse.data);
+      setModelData(modelDataResponse);
+
+      const _providerSettings = await modelSettingsCall(accessToken);
+      if (_providerSettings) {
+        setProviderSettings(_providerSettings);
+      }
+
+      let all_model_groups: Set<string> = new Set();
+      for (let i = 0; i < modelDataResponse.data.length; i++) {
+        const model = modelDataResponse.data[i];
+        all_model_groups.add(model.model_name);
+      }
+      console.log("all_model_groups:", all_model_groups);
+      let _array_model_groups = Array.from(all_model_groups);
+      _array_model_groups = _array_model_groups.sort();
+
+      setAvailableModelGroups(_array_model_groups);
+
+      let all_model_access_groups: Set<string> = new Set();
+      for (let i = 0; i < modelDataResponse.data.length; i++) {
+        const model = modelDataResponse.data[i];
+        let model_info: any | null = model.model_info;
+        if (model_info) {
+          let access_groups = model_info.access_groups;
+          if (access_groups) {
+            for (let j = 0; j < access_groups.length; j++) {
+              all_model_access_groups.add(access_groups[j]);
+            }
+          }
+        }
+      }
+
+      setAvailableModelAccessGroups(Array.from(all_model_access_groups));
+
+      console.log("array_model_groups:", _array_model_groups);
+      let _initial_model_group = "all";
+      if (_array_model_groups.length > 0) {
+        _initial_model_group = _array_model_groups[_array_model_groups.length - 1];
+        console.log("_initial_model_group:", _initial_model_group);
+      }
+
+      console.log("selectedModelGroup:", selectedModelGroup);
+
+      const modelMetricsResponse = await modelMetricsCall(
+        accessToken,
+        userID,
+        userRole,
+        _initial_model_group,
+        dateValue.from?.toISOString(),
+        dateValue.to?.toISOString(),
+        selectedAPIKey?.token,
+        selectedCustomer,
+      );
+
+      console.log("Model metrics response:", modelMetricsResponse);
+      setModelMetrics(modelMetricsResponse.data);
+      setModelMetricsCategories(modelMetricsResponse.all_api_bases);
+
+      const streamingModelMetricsResponse = await streamingModelMetricsCall(
+        accessToken,
+        _initial_model_group,
+        dateValue.from?.toISOString(),
+        dateValue.to?.toISOString(),
+      );
+
+      setStreamingModelMetrics(streamingModelMetricsResponse.data);
+      setStreamingModelMetricsCategories(streamingModelMetricsResponse.all_api_bases);
+
+      const modelExceptionsResponse = await modelExceptionsCall(
+        accessToken,
+        userID,
+        userRole,
+        _initial_model_group,
+        dateValue.from?.toISOString(),
+        dateValue.to?.toISOString(),
+        selectedAPIKey?.token,
+        selectedCustomer,
+      );
+      console.log("Model exceptions response:", modelExceptionsResponse);
+      setModelExceptions(modelExceptionsResponse.data);
+      setAllExceptions(modelExceptionsResponse.exception_types);
+
+      const slowResponses = await modelMetricsSlowResponsesCall(
+        accessToken,
+        userID,
+        userRole,
+        _initial_model_group,
+        dateValue.from?.toISOString(),
+        dateValue.to?.toISOString(),
+        selectedAPIKey?.token,
+        selectedCustomer,
+      );
+
+      const dailyExceptions = await adminGlobalActivityExceptions(
+        accessToken,
+        dateValue.from?.toISOString().split("T")[0],
+        dateValue.to?.toISOString().split("T")[0],
+        _initial_model_group,
+      );
+
+      setGlobalExceptionData(dailyExceptions);
+
+      const dailyExceptionsPerDeplyment = await adminGlobalActivityExceptionsPerDeployment(
+        accessToken,
+        dateValue.from?.toISOString().split("T")[0],
+        dateValue.to?.toISOString().split("T")[0],
+        _initial_model_group,
+      );
+
+      setGlobalExceptionPerDeployment(dailyExceptionsPerDeplyment);
+
+      console.log("dailyExceptions:", dailyExceptions);
+
+      console.log("dailyExceptionsPerDeplyment:", dailyExceptionsPerDeplyment);
+
+      console.log("slowResponses:", slowResponses);
+
+      setSlowResponsesData(slowResponses);
+
+      let all_end_users_data = await allEndUsersCall(accessToken);
+
+      setAllEndUsers(all_end_users_data?.map((u: any) => u.user_id));
+
+      const routerSettingsInfo = await getCallbacksCall(accessToken, userID, userRole);
+
+      let router_settings = routerSettingsInfo.router_settings;
+
+      console.log("routerSettingsInfo:", router_settings);
+
+      let model_group_retry_policy = router_settings.model_group_retry_policy;
+      let default_retries = router_settings.num_retries;
+
+      console.log("model_group_retry_policy:", model_group_retry_policy);
+      console.log("default_retries:", default_retries);
+      setModelGroupRetryPolicy(model_group_retry_policy);
+      setGlobalRetryPolicy(router_settings.retry_policy);
+      setDefaultRetry(default_retries);
+
+      const model_group_alias = router_settings.model_group_alias || {};
+      setModelGroupAlias(model_group_alias);
+
+      setLastRefreshed(new Date().toLocaleString());
+    } catch (error) {
+      console.error("There was an error fetching the model data", error);
+    }
+  };
+
   const handleRefreshClick = () => {
-    // Update the 'lastRefreshed' state to the current date and time
-    const currentDate = new Date();
-    setLastRefreshed(currentDate.toLocaleString());
+    return fetchDashboardData();
   };
 
   const handleSaveRetrySettings = async () => {
@@ -498,181 +655,24 @@ const ModelDashboard: React.FC<ModelDashboardProps> = ({
   };
 
   useEffect(() => {
-    if (!accessToken || !token || !userRole || !userID) {
+    fetchDashboardData();
+  }, [accessToken, token, userRole, userID]);
+
+  useEffect(() => {
+    if (!accessToken || modelMap != null) {
       return;
     }
-    const fetchData = async () => {
+    const fetchModelMap = async () => {
       try {
-        // Replace with your actual API call for model data
-        const modelDataResponse = await modelInfoCall(accessToken, userID, userRole);
-        console.log("Model data response:", modelDataResponse.data);
-        setModelData(modelDataResponse);
-        const _providerSettings = await modelSettingsCall(accessToken);
-        if (_providerSettings) {
-          setProviderSettings(_providerSettings);
-        }
-
-        // loop through modelDataResponse and get all`model_name` values
-        let all_model_groups: Set<string> = new Set();
-        for (let i = 0; i < modelDataResponse.data.length; i++) {
-          const model = modelDataResponse.data[i];
-          all_model_groups.add(model.model_name);
-        }
-        console.log("all_model_groups:", all_model_groups);
-        let _array_model_groups = Array.from(all_model_groups);
-        // sort _array_model_groups alphabetically
-        _array_model_groups = _array_model_groups.sort();
-
-        setAvailableModelGroups(_array_model_groups);
-
-        let all_model_access_groups: Set<string> = new Set();
-        for (let i = 0; i < modelDataResponse.data.length; i++) {
-          const model = modelDataResponse.data[i];
-          let model_info: any | null = model.model_info;
-          if (model_info) {
-            let access_groups = model_info.access_groups;
-            if (access_groups) {
-              for (let j = 0; j < access_groups.length; j++) {
-                all_model_access_groups.add(access_groups[j]);
-              }
-            }
-          }
-        }
-
-        setAvailableModelAccessGroups(Array.from(all_model_access_groups));
-
-        console.log("array_model_groups:", _array_model_groups);
-        let _initial_model_group = "all";
-        if (_array_model_groups.length > 0) {
-          // set selectedModelGroup to the last model group
-          _initial_model_group = _array_model_groups[_array_model_groups.length - 1];
-          console.log("_initial_model_group:", _initial_model_group);
-          //setSelectedModelGroup(_initial_model_group);
-        }
-
-        console.log("selectedModelGroup:", selectedModelGroup);
-
-        const modelMetricsResponse = await modelMetricsCall(
-          accessToken,
-          userID,
-          userRole,
-          _initial_model_group,
-          dateValue.from?.toISOString(),
-          dateValue.to?.toISOString(),
-          selectedAPIKey?.token,
-          selectedCustomer,
-        );
-
-        console.log("Model metrics response:", modelMetricsResponse);
-        // Sort by latency (avg_latency_per_token)
-
-        setModelMetrics(modelMetricsResponse.data);
-        setModelMetricsCategories(modelMetricsResponse.all_api_bases);
-
-        const streamingModelMetricsResponse = await streamingModelMetricsCall(
-          accessToken,
-          _initial_model_group,
-          dateValue.from?.toISOString(),
-          dateValue.to?.toISOString(),
-        );
-
-        // Assuming modelMetricsResponse now contains the metric data for the specified model group
-        setStreamingModelMetrics(streamingModelMetricsResponse.data);
-        setStreamingModelMetricsCategories(streamingModelMetricsResponse.all_api_bases);
-
-        const modelExceptionsResponse = await modelExceptionsCall(
-          accessToken,
-          userID,
-          userRole,
-          _initial_model_group,
-          dateValue.from?.toISOString(),
-          dateValue.to?.toISOString(),
-          selectedAPIKey?.token,
-          selectedCustomer,
-        );
-        console.log("Model exceptions response:", modelExceptionsResponse);
-        setModelExceptions(modelExceptionsResponse.data);
-        setAllExceptions(modelExceptionsResponse.exception_types);
-
-        const slowResponses = await modelMetricsSlowResponsesCall(
-          accessToken,
-          userID,
-          userRole,
-          _initial_model_group,
-          dateValue.from?.toISOString(),
-          dateValue.to?.toISOString(),
-          selectedAPIKey?.token,
-          selectedCustomer,
-        );
-
-        const dailyExceptions = await adminGlobalActivityExceptions(
-          accessToken,
-          dateValue.from?.toISOString().split("T")[0],
-          dateValue.to?.toISOString().split("T")[0],
-          _initial_model_group,
-        );
-
-        setGlobalExceptionData(dailyExceptions);
-
-        const dailyExceptionsPerDeplyment = await adminGlobalActivityExceptionsPerDeployment(
-          accessToken,
-          dateValue.from?.toISOString().split("T")[0],
-          dateValue.to?.toISOString().split("T")[0],
-          _initial_model_group,
-        );
-
-        setGlobalExceptionPerDeployment(dailyExceptionsPerDeplyment);
-
-        console.log("dailyExceptions:", dailyExceptions);
-
-        console.log("dailyExceptionsPerDeplyment:", dailyExceptionsPerDeplyment);
-
-        console.log("slowResponses:", slowResponses);
-
-        setSlowResponsesData(slowResponses);
-
-        let all_end_users_data = await allEndUsersCall(accessToken);
-
-        setAllEndUsers(all_end_users_data?.map((u: any) => u.user_id));
-
-        const routerSettingsInfo = await getCallbacksCall(accessToken, userID, userRole);
-
-        let router_settings = routerSettingsInfo.router_settings;
-
-        console.log("routerSettingsInfo:", router_settings);
-
-        let model_group_retry_policy = router_settings.model_group_retry_policy;
-        let default_retries = router_settings.num_retries;
-
-        console.log("model_group_retry_policy:", model_group_retry_policy);
-        console.log("default_retries:", default_retries);
-        setModelGroupRetryPolicy(model_group_retry_policy);
-        setGlobalRetryPolicy(router_settings.retry_policy);
-        setDefaultRetry(default_retries);
-
-        // Set model group alias
-        const model_group_alias = router_settings.model_group_alias || {};
-        setModelGroupAlias(model_group_alias);
+        const data = await modelCostMap(accessToken);
+        console.log(`received model cost map data: ${Object.keys(data)}`);
+        setModelMap(data);
       } catch (error) {
-        console.error("There was an error fetching the model data", error);
+        console.error("There was an error fetching the model cost map", error);
       }
     };
-
-    if (accessToken && token && userRole && userID) {
-      fetchData();
-    }
-
-    const fetchModelMap = async () => {
-      const data = await modelCostMap(accessToken);
-      console.log(`received model cost map data: ${Object.keys(data)}`);
-      setModelMap(data);
-    };
-    if (modelMap == null) {
-      fetchModelMap();
-    }
-
-    handleRefreshClick();
-  }, [accessToken, token, userRole, userID, modelMap, lastRefreshed, selectedTeam]);
+    fetchModelMap();
+  }, [accessToken, modelMap]);
 
   if (!modelData) {
     return <div>Loading...</div>;
